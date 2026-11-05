@@ -22,6 +22,8 @@ CONTRADICTION_PENALTY = {
     "geo_test": -2,
     "scale_test": -1,
     "seniority_test": -1,
+    "gtm_test": -1,
+    "scale_phase_test": -1,
 }
 
 HIGH_MIN = 7

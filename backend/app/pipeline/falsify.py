@@ -9,7 +9,7 @@ from ..llm.client import LLMError
 from ..llm.schemas import FalsifyPlan
 from ..models import Signal, SignalType
 from ..providers.crustdata.client import BudgetExceeded, CrustdataError
-from . import collect
+from . import collect, factors
 from .context import Ctx
 from .hypothesize import load_hypotheses
 
@@ -19,6 +19,8 @@ MIN_POSTINGS = 3
 NOVELTY_SIMILAR = 1.25   # recent share <= 1.25x older share -> "not emerging"
 PEER_SIMILAR = 0.8       # peers' mean share >= 80% of company share -> industry trend
 MANDATORY = ["novelty_test", "evergreen_test", "scale_test", "peer_test"]
+GTM_RISE = 1.2           # company GTM share recent >= 1.2x prior -> GTM push (test_factors §1)
+SCALE_PHASE_JUNIOR = 0.5  # junior share >= 0.5 and zero-to-one share below it -> scale/maintenance phase
 
 
 @dataclass
@@ -105,7 +107,7 @@ def geo_test(h: dict, s: dict[str, Signal], f: Feat) -> TestResult:
 
 def corroboration_test(h: dict, s: dict[str, Signal], f: Feat) -> TestResult:
     prim = [x.id for x in s.values() if x.signal_type == SignalType.web_evidence and h["theme_id"] in x.theme_tags
-            and x.features.get("source_class") == "primary" and x.features.get("purpose") != "disconfirm"]
+            and x.features.get("source_class") == "primary" and x.features.get("purpose") not in ("disconfirm", "factor")]
     if prim:
         return TestResult("corroboration_test", "supports", f"{len(prim)} primary-source web page(s) found for the theme.", prim)
     return TestResult("corroboration_test", "neutral", "No primary-source (company domain) web evidence found.", [])
@@ -119,10 +121,62 @@ def source_diversity_test(h: dict, s: dict[str, Signal], f: Feat) -> TestResult:
     return TestResult("source_diversity_test", "neutral", f"Only {len(srcs)} distinct source(s) behind supporting signals.", ids)
 
 
+# ------------------------------------------------------------------ test_factors.md factor tests
+def gtm_test(h: dict, s: dict[str, Signal], f: Feat) -> TestResult:
+    """§1 Departmental Ratios: did the company's GTM-vs-R&D posting mix shift toward GTM?"""
+    rec, pri = f.get("company_gtm_share_recent"), f.get("company_gtm_share_prior")
+    ids = _ids(f, "company_gtm_share_recent", "company_gtm_share_prior", "theme_gtm_share_recent")
+    if rec is None or pri is None:
+        return TestResult("gtm_test", "inconclusive", "Missing GTM/R&D factor counts for recent or prior window.", ids)
+    if h["hypothesis_type"] not in ("go_to_market_shift", "new_customer_segment"):
+        return TestResult("gtm_test", "neutral", "Not a go-to-market hypothesis.", ids)
+    if (pri == 0 and rec > 0) or (pri > 0 and rec >= pri * GTM_RISE):
+        return TestResult("gtm_test", "supports", f"GTM share of GTM+R&D postings rose from {pri} (prior) to {rec} (recent).", ids)
+    return TestResult("gtm_test", "contradicts", f"GTM share {rec} (recent) vs {pri} (prior): no shift toward GTM hiring.", ids)
+
+
+def compliance_test(h: dict, s: dict[str, Signal], f: Feat) -> TestResult:
+    """§1 Domain & Compliance Keywords in non-legal postings (regulated vertical / enterprise tier)."""
+    th, rec, pri = (f.get("theme_compliance_postings_recent"), f.get("company_compliance_postings_recent"),
+                    f.get("company_compliance_postings_prior"))
+    ids = _ids(f, "theme_compliance_postings_recent", "company_compliance_postings_recent", "company_compliance_postings_prior")
+    if th is None and rec is None:
+        return TestResult("compliance_test", "inconclusive", "No compliance-keyword factor counts.", ids)
+    if th:
+        return TestResult("compliance_test", "supports", f"{th} recent theme postings outside legal roles mention compliance keywords.", ids)
+    if rec and pri is not None and rec > pri:
+        return TestResult("compliance_test", "supports", f"Company postings mentioning compliance keywords: {pri} (prior) -> {rec} (recent).", ids)
+    return TestResult("compliance_test", "neutral", "No rise in compliance keywords in non-legal postings.", ids)
+
+
+def zero_to_one_test(h: dict, s: dict[str, Signal], f: Feat) -> TestResult:
+    """§1 Seniority Ratio: founding / head-of / principal roles inside the theme suggest zero-to-one work."""
+    n = f.get("theme_zero_to_one_postings_recent")
+    ids = _ids(f, "theme_zero_to_one_postings_recent", "company_zero_to_one_share_recent")
+    if n is None:
+        return TestResult("zero_to_one_test", "inconclusive", "No theme-level zero-to-one factor count.", ids)
+    if n > 0:
+        return TestResult("zero_to_one_test", "supports", f"{n} recent theme postings have founding/head/principal/staff/director titles.", ids)
+    return TestResult("zero_to_one_test", "neutral", "No founding/head/principal-level titles among recent theme postings.", ids)
+
+
+def scale_phase_test(h: dict, s: dict[str, Signal], f: Feat) -> TestResult:
+    """§1 Seniority Ratio: junior-heavy hiring reads as scale/maintenance, not contraction."""
+    j, z = f.get("company_junior_share_recent"), f.get("company_zero_to_one_share_recent")
+    ids = _ids(f, "company_junior_share_recent", "company_zero_to_one_share_recent")
+    if j is None or z is None:
+        return TestResult("scale_phase_test", "inconclusive", "Missing junior / zero-to-one factor shares.", ids)
+    if j >= SCALE_PHASE_JUNIOR and j > z:
+        return TestResult("scale_phase_test", "contradicts", f"Junior share {j} vs zero-to-one share {z}: hiring looks like a scaling phase.", ids)
+    return TestResult("scale_phase_test", "neutral", f"Junior share {j}, zero-to-one share {z}.", ids)
+
+
 REGISTRY: dict[str, TestFn] = {
     "novelty_test": novelty_test, "evergreen_test": evergreen_test, "scale_test": scale_test,
     "peer_test": peer_test, "seniority_test": seniority_test, "geo_test": geo_test,
     "corroboration_test": corroboration_test, "source_diversity_test": source_diversity_test,
+    "gtm_test": gtm_test, "compliance_test": compliance_test, "zero_to_one_test": zero_to_one_test,
+    "scale_phase_test": scale_phase_test,
 }
 
 
@@ -134,6 +188,7 @@ def select_tests(picked: list[str], hypothesis_type: str) -> list[str]:
             out.append(m)
     if hypothesis_type == "new_geography" and "geo_test" not in out:
         out.append("geo_test")
+    out += factors.TESTS_FOR_TYPE.get(hypothesis_type, [])  # test_factors.md factor tests
     return list(dict.fromkeys(out))
 
 

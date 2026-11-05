@@ -15,7 +15,7 @@ from ..db import now_iso
 from ..models import SignalType, Theme, new_signal
 from ..providers.crustdata import jobs, people, web
 from ..providers.crustdata.client import BudgetExceeded, CrustdataError
-from . import normalise
+from . import factors, normalise
 from .context import Ctx
 
 MIN_ROWS_THRESHOLD = 2
@@ -109,6 +109,7 @@ def baseline(ctx: Ctx) -> None:
             features={"metric": f"baseline_{field or 'count'}", "window": wname, "value": value},
         )
         base[key] = {"value": value, "signal_id": sig.id}
+    company_factor_counts(ctx)
     ctx.event("baseline", "Baseline aggregations collected",
               payload={k: (v.get("value") if not isinstance(v.get("value"), list) else len(v["value"])) for k, v in base.items()})
     ctx.state["emerging_terms"] = emerging_terms(ctx)
@@ -117,6 +118,92 @@ def baseline(ctx: Ctx) -> None:
 
 def baseline_value(ctx: Ctx, window: str, field: str | None = None) -> Any:
     return (ctx.state["baseline"].get(f"{window}:{field or 'count'}") or {}).get("value")
+
+
+# ------------------------------------------------------------------ test_factors.md constraints (factors.py)
+def _factor_count(ctx: Ctx, factor: factors.JobFactor, window: str, theme: Theme | None,
+                  store: dict, key: str) -> None:
+    """One limit:0 count with the factor's constraints applied to the Crustdata query; stored as a derived_metric."""
+    if key in store:
+        return
+    w = ctx.windows[window]
+    qb = _theme_qb(ctx, theme, window) if theme else jobs.JobQueryBuilder().company(ctx.company_id).window(w)
+    factor.apply(qb)
+    scope = f"theme '{theme.label}'" if theme else "company"
+    try:
+        n, body = jobs.count(ctx.crust, ctx.inv_id, qb, f"factor_{factor.id}_{theme.id if theme else 'company'}_{window}")
+    except (CrustdataError, BudgetExceeded) as exc:
+        ctx.warn("factors", f"{key} failed: {exc}")
+        store[key] = {"error": str(exc)[:200]}
+        return
+    sig = new_signal(
+        ctx.db, ctx.inv_id,
+        signal_type=SignalType.derived_metric,
+        title=f"Factor {factor.id} — {scope}, {window} window",
+        summary=f"{n} {scope} postings added {w.start} to {w.end} matched factor '{factor.id}' ({factor.doc_ref}).",
+        observed_at=w.end.isoformat(),
+        source_name="crustdata_job_search",
+        endpoint="/job/search",
+        raw_ref=json.dumps(body, sort_keys=True),
+        provider_mode=ctx.provider_mode,
+        derived=True,
+        computation=f"Crustdata /job/search limit:0 count for {scope}, metadata.date_added in [{w.start}, {w.end}), "
+                    f"constrained to {factor.description}.",
+        theme_tags=[theme.id] if theme else ["baseline"],
+        features={"metric": f"factor_{factor.id}", "window": window, "value": n, "factor": factor.id},
+    )
+    store[key] = {"value": n, "signal_id": sig.id}
+
+
+def company_factor_counts(ctx: Ctx) -> None:
+    """Every job factor, company-wide, recent + prior windows (cheap aggregation calls)."""
+    if not ctx.settings.enable_factors:
+        return
+    store = ctx.state.setdefault("factors", {})
+    for f in factors.JOB_FACTORS:
+        for w in factors.COMPANY_WINDOWS:
+            _factor_count(ctx, f, w, None, store, f"{w}:{f.id}")
+    ctx.event("factors", "Company-level factor counts collected",
+              payload={k: v.get("value") for k, v in store.items()})
+
+
+def theme_factor_counts(ctx: Ctx, max_themes: int | None = None) -> None:
+    """Theme-scoped factors (recent window) for themes promising enough to have had rows fetched."""
+    if not ctx.settings.enable_factors:
+        return
+    limit = ctx.settings.factor_max_themes if max_themes is None else max_themes
+    ranked = sorted((t for t in ctx.themes() if ctx.ledger_for(t.id)["rows_fetched"]),
+                    key=lambda t: -(ctx.ledger_for(t.id)["count"].get("recent") or 0))[:limit]
+    for t in ranked:
+        store = ctx.ledger_for(t.id).setdefault("factors", {})
+        for f in factors.JOB_FACTORS:
+            if not f.theme_scoped:
+                continue
+            if ctx.crust.budget.calls_left <= 1:
+                ctx.warn("factors", "API call budget too low for theme factor counts")
+                return
+            _factor_count(ctx, f, "recent", t, store, f"recent:{f.id}")
+    if ranked:
+        ctx.event("factors", "Theme-level factor counts collected",
+                  payload={t.id: {k: v.get("value") for k, v in ctx.ledger_for(t.id)["factors"].items()} for t in ranked})
+
+
+def web_factor_evidence(ctx: Ctx) -> None:
+    """test_factors.md §3/§4 page signals (pricing, sub-processors, trademarks, changelog) via web search, top theme only."""
+    n = ctx.settings.factor_web_queries
+    if not ctx.settings.enable_factors or not ctx.settings.enable_web or n <= 0:
+        return
+    ranked = sorted(ctx.themes(), key=lambda t: -(ctx.ledger_for(t.id)["count"].get("recent") or 0))
+    if not ranked or not (ctx.ledger_for(ranked[0].id)["count"].get("recent") or 0):
+        return
+    top = ranked[0]
+    done = ctx.state.setdefault("web_factors_done", [])
+    for fid, template in factors.WEB_FACTOR_QUERIES[:n]:
+        if fid in done or ctx.crust.budget.calls_left < 3:
+            continue
+        done.append(fid)
+        web_evidence(ctx, top.id, reason=f"test_factors web factor: {fid}",
+                     query=template.format(company=ctx.company_name, theme=top.label), purpose="factor", web_factor=fid)
 
 
 # ------------------------------------------------------------------ emerging terms (A5.7)
@@ -267,7 +354,8 @@ def people_leadership(ctx: Ctx, theme_id: str, reason: str = "") -> dict:
     return {"theme_id": theme_id, "people": len(sigs)}
 
 
-def web_evidence(ctx: Ctx, theme_id: str, reason: str = "", query: str | None = None, purpose: str = "support") -> dict:
+def web_evidence(ctx: Ctx, theme_id: str, reason: str = "", query: str | None = None, purpose: str = "support",
+                 web_factor: str | None = None) -> dict:
     theme = _theme_or_reject(ctx, theme_id)
     if not ctx.settings.enable_web:
         raise ProbeRejected("web probe disabled (ENABLE_WEB=0)")
@@ -289,7 +377,7 @@ def web_evidence(ctx: Ctx, theme_id: str, reason: str = "", query: str | None = 
         return {"theme_id": theme_id, "results": 0, "error": "web search unavailable"}
     pid = record_probe(ctx, "web_evidence", {"theme_id": theme_id, "query": q}, "ok", reason, rows=len(results),
                        result=[{"title": r["title"], "url": r["url"]} for r in results])
-    sigs = normalise.web_to_signals(ctx, results, theme, pid, purpose=purpose)
+    sigs = normalise.web_to_signals(ctx, results, theme, pid, purpose=purpose, web_factor=web_factor)
     if purpose == "support":
         ctx.ledger_for(theme_id)["web"] = [s.id for s in sigs]
     return {"theme_id": theme_id, "results": len(sigs),

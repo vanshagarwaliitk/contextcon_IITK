@@ -219,4 +219,7 @@ def run(ctx: Ctx) -> None:
     else:
         p.run()
     p.coverage_pass()
+    # test_factors.md constraints, applied automatically (not left to the LLM's choice)
+    collect.theme_factor_counts(ctx)
+    collect.web_factor_evidence(ctx)
     ctx.event("planner", "Probe loop finished", payload={"ledger": ledger_summary(ctx), **p._budget_info()})

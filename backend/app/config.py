@@ -36,6 +36,10 @@ class Settings:
 
     enable_people: bool = field(default_factory=lambda: _bool("ENABLE_PEOPLE", "1"))
     enable_web: bool = field(default_factory=lambda: _bool("ENABLE_WEB", "1"))
+    # test_factors.md factors applied to Crustdata queries (pipeline/factors.py)
+    enable_factors: bool = field(default_factory=lambda: _bool("ENABLE_FACTORS", "1"))
+    factor_max_themes: int = field(default_factory=lambda: int(os.getenv("FACTOR_MAX_THEMES", "2")))
+    factor_web_queries: int = field(default_factory=lambda: int(os.getenv("FACTOR_WEB_QUERIES", "2")))
 
     fail_endpoints: list[str] = field(
         default_factory=lambda: [e.strip() for e in os.getenv("FAIL_ENDPOINT", "").split(",") if e.strip()]

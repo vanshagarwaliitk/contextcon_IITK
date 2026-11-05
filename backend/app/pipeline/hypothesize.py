@@ -12,7 +12,13 @@ from .context import Ctx
 
 FEATURE_KEYS = ["theme_postings_recent", "theme_postings_prior", "theme_postings_older", "velocity_ratio",
                 "concentration_recent", "concentration_older", "seniority_share", "geo_new_countries",
-                "evergreen_ratio", "peer_share_gap", "source_platforms", "tech_postings_recent"]
+                "evergreen_ratio", "peer_share_gap", "source_platforms", "tech_postings_recent",
+                # test_factors.md factors (pipeline/factors.py)
+                "company_gtm_share_recent", "company_gtm_share_prior", "company_zero_to_one_share_recent",
+                "company_junior_share_recent", "company_reposted_share_recent",
+                "company_compliance_postings_recent", "company_compliance_postings_prior",
+                "theme_compliance_postings_recent", "theme_zero_to_one_postings_recent",
+                "theme_gtm_postings_recent", "theme_gtm_share_recent"]
 CONTRACTION_WORDS = ("contraction", "cost", "slowdown", "slowing", "reduc", "declin", "falling", "fewer")
 
 

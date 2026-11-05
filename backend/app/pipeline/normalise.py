@@ -119,7 +119,8 @@ def people_to_signals(ctx: Ctx, people: list[dict], theme: Theme, probe_id: str)
     return out
 
 
-def web_to_signals(ctx: Ctx, results: list[dict], theme: Theme, probe_id: str, purpose: str = "support") -> list[Signal]:
+def web_to_signals(ctx: Ctx, results: list[dict], theme: Theme, probe_id: str, purpose: str = "support",
+                   web_factor: str | None = None) -> list[Signal]:
     out = []
     for r in results:
         cls = classify_source(r.get("url"), ctx.company_domain)
@@ -137,7 +138,8 @@ def web_to_signals(ctx: Ctx, results: list[dict], theme: Theme, probe_id: str, p
                 raw_ref=f"probe:{probe_id}",
                 provider_mode=ctx.provider_mode,
                 theme_tags=[theme.id],
-                features={"source_class": cls, "purpose": purpose},
+                features={"source_class": cls, "purpose": purpose,
+                          **({"web_factor": web_factor} if web_factor else {})},
             )
         )
     return out

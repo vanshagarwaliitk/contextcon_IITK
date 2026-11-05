@@ -103,6 +103,25 @@ class JobQueryBuilder:
         self._conds.append(cond("technographics.technologies.name", "in", list(names)))
         return self
 
+    def title_any(self, words: list[str]) -> "JobQueryBuilder":
+        """OR over job_details.title (.) word — all words of each entry must appear."""
+        ors = [cond("job_details.title", "(.)", w) for w in words if w.strip()]
+        if ors:
+            self._conds.append(group("or", ors))
+        return self
+
+    def description_any(self, phrases: list[str]) -> "JobQueryBuilder":
+        """OR over content.description [.] phrase — exact phrase match."""
+        ors = [cond("content.description", "[.]", p) for p in phrases if p.strip()]
+        if ors:
+            self._conds.append(group("or", ors))
+        return self
+
+    def exclude_categories(self, cats: list[str]) -> "JobQueryBuilder":
+        if cats:
+            self._conds.append(cond("job_details.category", "not_in", list(cats)))
+        return self
+
     def reposted(self, flag: bool) -> "JobQueryBuilder":
         self._conds.append(cond("job_details.reposted_job", "=", flag))
         return self

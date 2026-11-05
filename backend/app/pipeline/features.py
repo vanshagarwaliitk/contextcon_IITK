@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from ..models import Signal, SignalType, new_signal, save_signal
+from . import factors
 from .collect import baseline_value
 from .context import Ctx
 
@@ -53,6 +54,54 @@ def evergreen_ratio(rows: list[dict]) -> float | None:
 def new_countries(recent_theme_countries: list[str], earlier_countries: list[str]) -> list[str]:
     earlier = {c for c in earlier_countries if c}
     return sorted({c for c in recent_theme_countries if c and c not in earlier})
+
+
+# ------------------------------------------------------------------ test_factors.md factor features
+def _factor_features(ctx: Ctx, theme, led: dict, totals: dict, base_ids: dict, f: dict, ids: dict, add) -> None:
+    """Features from the factor-constrained Crustdata counts (collect.company_factor_counts / theme_factor_counts)."""
+    comp = ctx.state.get("factors") or {}
+    tf = led.get("factors") or {}
+
+    def cval(w: str, fid: str):
+        return (comp.get(f"{w}:{fid}") or {}).get("value")
+
+    def cid(w: str, fid: str):
+        return (comp.get(f"{w}:{fid}") or {}).get("signal_id")
+
+    def cite(name: str, value: Any, sid: str | None) -> None:
+        """Expose an existing factor-count signal as a feature (no new signal)."""
+        if value is not None and sid:
+            f[name], ids[name] = value, sid
+
+    # departmental ratio, company-wide (test_factors §1 R&D vs GTM)
+    for w in factors.COMPANY_WINDOWS:
+        g = factors.ratio(cval(w, "gtm"), cval(w, "rnd"))
+        if g is not None:
+            add(f"company_gtm_share_{w}", g,
+                f"factor_gtm_{w} / (factor_gtm_{w} + factor_rnd_{w}) (title-keyword counts, company-wide).",
+                [cid(w, "gtm"), cid(w, "rnd")],
+                f"Company-wide share of GTM vs R&D titled postings in the {w} window: {g}.")
+    # seniority ratio, company-wide (§1 zero-to-one vs scale)
+    for fid in ("zero_to_one", "junior", "reposted"):
+        s = factors.share(cval("recent", fid), totals.get("recent"))
+        if s is not None:
+            add(f"company_{fid}_share_recent", s,
+                f"factor_{fid}_recent / total recent postings ({totals.get('recent')}).",
+                [cid("recent", fid), base_ids.get("recent")],
+                f"Share of all recent company postings matching factor '{fid}': {s}.")
+    # compliance keywords, company-wide (§1)
+    for w in factors.COMPANY_WINDOWS:
+        cite(f"company_compliance_postings_{w}", cval(w, "compliance"), cid(w, "compliance"))
+    # theme-scoped counts
+    for fid in ("compliance", "zero_to_one", "gtm"):
+        e = tf.get(f"recent:{fid}") or {}
+        cite(f"theme_{fid}_postings_recent", e.get("value"), e.get("signal_id"))
+    tg = (tf.get("recent:gtm") or {})
+    s = factors.share(tg.get("value"), (led.get("count") or {}).get("recent"))
+    if s is not None:
+        add("theme_gtm_share_recent", s, "theme_gtm_postings_recent / theme_postings_recent.",
+            [tg.get("signal_id"), ids.get("theme_postings_recent")],
+            f"Share of recent '{theme.label}' postings with GTM titles: {s}.")
 
 
 # ------------------------------------------------------------------ stage
@@ -160,6 +209,8 @@ def run(ctx: Ctx) -> dict[str, dict]:
         if led.get("tech") is not None:
             add("tech_postings_recent", led["tech"]["count"], "recent postings with technographics.technologies.name in tech_keywords.",
                 [], f"{led['tech']['count']} recent postings mention {', '.join(led['tech']['technologies'])}.")
+
+        _factor_features(ctx, theme, led, totals, base_ids, f, ids, add)
 
         # singletons -> weak
         if len(rows) == 1:
