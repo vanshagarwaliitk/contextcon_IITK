@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoreData brief — {{ r.scope.company or "company" }}</title>
+<style>
+  :root { --fact:#1f5fbf; --fact-bg:#eaf1fb; --hyp:#a86400; --hyp-bg:#fff4e0; --rec:#1c7a3d; --rec-bg:#e7f6ec;
+          --warn:#a32020; --ink:#1d1d1f; --muted:#666; --line:#ddd; }
+  body { font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--ink); background:#fff;
+         max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { margin: 0 0 4px; font-size: 26px; } h2 { margin-top: 36px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .banner { background:#fdecea; color: var(--warn); border:1px solid #f3c2bd; padding:8px 12px; border-radius:6px; margin:12px 0; font-weight:600; }
+  .kpis { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
+  .kpi { border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-width:140px; }
+  .kpi b { display:block; font-size:20px; }
+  .tag { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.04em; padding:1px 6px; border-radius:4px; margin-right:6px; vertical-align:1px; }
+  .FACT { background: var(--fact-bg); color: var(--fact); } .HYPOTHESIS { background: var(--hyp-bg); color: var(--hyp); }
+  .RECOMMENDATION { background: var(--rec-bg); color: var(--rec); } .UNVERIFIED { background:#eee; color:#555; }
+  .block { border-left: 4px solid var(--line); padding: 4px 10px; margin: 6px 0; }
+  .block.fact { border-color: var(--fact); } .block.hypothesis { border-color: var(--hyp); background: #fffbf3; }
+  .block.recommendation { border-color: var(--rec); } .block.unverified { border-color: #bbb; color: #555; }
+  .cid { font-size: 11px; color: var(--muted); }
+  details.hyp { border:1px solid #f0d9ad; background: var(--hyp-bg); border-radius: 8px; padding: 10px 14px; margin: 14px 0; }
+  details.hyp summary { cursor: pointer; font-weight: 600; }
+  .strength { float:right; font-weight:700; } .High{color:#1c7a3d} .Medium{color:#a86400} .Low{color:#a32020}
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0; }
+  th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 4px 6px; vertical-align: top; }
+  td.contradicts { color: var(--warn); font-weight: 600; } td.supports { color: var(--rec); }
+  a { color: var(--fact); word-break: break-all; }
+  @media print { details.hyp { break-inside: avoid; } details.hyp[open] summary ~ * { display: block; } a { color: inherit; } }
+</style>
+</head>
+<body>
+{% macro claimtag(ids) -%}
+  {%- set c = claims.get(ids[0]) if ids else none -%}
+  {%- if c is none -%}<span class="tag UNVERIFIED">NOTE</span>
+  {%- elif c.status == 'unverified' -%}<span class="tag UNVERIFIED">NOT VERIFIED</span>
+  {%- elif c.claim_type == 'fact' -%}<span class="tag FACT">FACT</span>
+  {%- elif c.claim_type == 'hypothesis' -%}<span class="tag HYPOTHESIS">HYPOTHESIS</span>
+  {%- else -%}<span class="tag RECOMMENDATION">RECOMMENDATION</span>{%- endif -%}
+{%- endmacro %}
+{% macro sentences(items, kind) -%}
+  {% for s in items %}
+    {% set c = claims.get(s.claim_ids[0]) if s.claim_ids else none %}
+    <div class="block {{ 'unverified' if c and c.status == 'unverified' else (c.claim_type if c else kind) }}">
+      {{ claimtag(s.claim_ids) }}{{ s.text }}
+      {% if s.claim_ids %}<span class="cid">[{{ s.claim_ids|join(', ') }}{% for cid in s.claim_ids %}{% if claims.get(cid) %}{% for sid in claims[cid].signal_ids[:4] %} · {{ sid }}{% endfor %}{% endif %}{% endfor %}]</span>{% endif %}
+    </div>
+  {% else %}<p class="muted">Nothing to report.</p>{% endfor %}
+{%- endmacro %}
+
+<h1>CoreData intelligence brief</h1>
+<div class="muted">{{ r.scope.company }} ({{ r.scope.domain }}) · Crustdata id {{ r.scope.crustdata_company_id }} · generated {{ r.scope.generated_at }}</div>
+{% if r.scope.provider_mode != 'live' %}<div class="banner">Contains replayed/seeded data ({{ r.scope.provider_mode|upper }} mode) — recorded real API responses, not live.</div>{% endif %}
+{% if r.warnings %}<div class="banner" style="background:#fff8e6;color:#7a5200;border-color:#f0d9ad">Completed with {{ r.warnings|length }} warning(s) — see Unknowns.</div>{% endif %}
+
+<h2>Scope</h2>
+<p><b>Question:</b> {{ r.scope.question or "(none — data-driven scan)" }}<br>
+<b>Competitor set:</b> {{ r.scope.competitors|join(', ') or "none" }}<br>
+<b>Windows:</b> {% for k, w in r.scope.windows.items() %}{{ k }} {{ w[0] }} → {{ w[1] }}{% if not loop.last %} · {% endif %}{% endfor %}<br>
+<b>Sources:</b> {{ r.scope.sources|join(', ') }}</p>
+<div class="kpis">
+  <div class="kpi"><span class="muted">Evidence coverage</span><b>{{ ((r.coverage.evidence_coverage or 0) * 100)|round|int }}%</b><span class="muted">facts with a source</span></div>
+  <div class="kpi"><span class="muted">Hypotheses</span><b>{{ r.hypotheses|length }}</b></div>
+  <div class="kpi"><span class="muted">Signals</span><b>{{ r.signals|length }}</b></div>
+  <div class="kpi"><span class="muted">API calls / est. credits</span><b>{{ r.budget.calls }} / {{ r.budget.credits }}</b></div>
+</div>
+<p class="muted">{{ r.status_note }} Evidence strength is rule-based (Low / Medium / High), never a probability.</p>
+
+<h2>Executive summary</h2>
+{{ sentences(r.sections.executive_summary, 'hypothesis') }}
+
+<h2>Key findings (observed)</h2>
+{{ sentences(r.sections.key_findings, 'fact') }}
+
+<h2>Hypotheses</h2>
+{% for h in r.hypotheses %}
+<details class="hyp" {% if loop.first %}open{% endif %}>
+  <summary><span class="tag HYPOTHESIS">HYPOTHESIS</span>{{ h.title }}
+    <span class="strength {{ h.evidence_strength }}">{{ h.evidence_strength or 'n/a' }} · {{ (h.evidence_status or '')|replace('_', ' ') }}</span></summary>
+  <p>{{ h.explanation }}</p>
+  <p class="muted">Type: {{ h.hypothesis_type }} · {{ h.diagnostic_note }}</p>
+  <b>Supporting signals</b>
+  <table><tr><th>id</th><th>type</th><th>signal</th><th>observed</th><th>source</th><th>retrieved</th></tr>
+  {% for sid in h.supporting_signal_ids %}{% set s = signals.get(sid) %}{% if s %}
+    <tr><td>{{ sid }}</td><td>{{ s.signal_type }}</td><td>{{ s.summary }}</td><td>{{ (s.observed_at or 'n/a')[:10] }}</td>
+      <td>{% if s.source_url %}<a href="{{ s.source_url }}">{{ s.source_name }}</a>{% else %}{{ s.source_name }}{% endif %}</td><td>{{ s.retrieved_at[:10] }}</td></tr>
+  {% endif %}{% endfor %}</table>
+  <b>Contradicting signals</b>
+  {% if h.contradicting_signal_ids %}<table>{% for sid in h.contradicting_signal_ids %}{% set s = signals.get(sid) %}{% if s %}
+    <tr><td>{{ sid }}</td><td class="contradicts">{{ s.summary }}</td><td>{{ s.source_name }}</td></tr>{% endif %}{% endfor %}</table>
+  {% else %}<p class="muted">None found.</p>{% endif %}
+  <b>Falsification tests</b>
+  <table><tr><th>test</th><th>outcome</th><th>explanation</th></tr>
+  {% for t in h.tests %}<tr><td>{{ t.test_id }}</td><td class="{{ t.outcome }}">{{ t.outcome }}</td><td>{{ t.explanation }}</td></tr>{% endfor %}</table>
+  <b>Alternative explanations</b>
+  <ul>{% for a in h.alternatives %}<li>{{ a.ref }}: {{ a.statement }} <span class="muted">(would be supported by: {{ a.would_be_supported_by }})</span></li>{% endfor %}</ul>
+  <b>Evidence gaps</b><ul>{% for g in h.evidence_gaps %}<li>{{ g }}</li>{% endfor %}</ul>
+  <b>Score breakdown</b>
+  <table>{% for rr in h.score_breakdown.rules or [] %}<tr><td>{{ rr.rule }}</td><td>{{ rr.points }}</td><td>{{ rr.reason }}</td></tr>{% endfor %}</table>
+  {% if h.score_breakdown.caps_applied %}<p class="muted">Caps applied: {{ h.score_breakdown.caps_applied|join('; ') }}</p>{% endif %}
+</details>
+{% else %}
+<p>{% if r.outcome == 'insufficient_evidence' %}<b>Insufficient evidence.</b> No signal cluster met the minimum bar (≥3 postings or ≥2 signal types). This is a valid result.{% else %}No hypotheses were generated.{% endif %}</p>
+{% endfor %}
+{{ sentences(r.sections.hypotheses, 'hypothesis') }}
+
+<h2>Counter-evidence and alternatives</h2>
+{{ sentences(r.sections.counter_evidence_and_alternatives, 'hypothesis') }}
+
+<h2>Unknowns</h2>
+{{ sentences(r.sections.unknowns, 'unverified') }}
+{% if r.profile_missing %}<div class="block unverified"><span class="tag UNVERIFIED">NOT FOUND</span>Company enrichment profile: not found.</div>{% endif %}
+
+<h2>Recommended next indicators</h2>
+{{ sentences(r.sections.recommended_next_indicators, 'recommendation') }}
+
+<h2>Signal timeline</h2>
+<table><tr><th>id</th><th>type</th><th>observed</th><th>summary</th><th>status</th></tr>
+{% for s in timeline %}
+<tr><td>{{ s.id }}</td><td>{{ s.signal_type }}</td><td>{{ (s.observed_at or 'n/a')[:10] }}</td><td>{{ s.summary }}</td><td>{{ s.status }}</td></tr>
+{% endfor %}</table>
+
+<h2>Source register</h2>
+<table><tr><th>id</th><th>provider / source</th><th>URL or reference</th><th>retrieved</th><th>mode</th></tr>
+{% for s in r.signals %}
+<tr><td>{{ s.id }}</td><td>{{ s.provider }} / {{ s.source_name }}</td>
+<td>{% if s.source_url %}<a href="{{ s.source_url }}">{{ s.source_url }}</a>{% else %}{{ s.endpoint }}{% if s.computation %} — computed: {{ s.computation }}{% endif %}{% endif %}</td>
+<td>{{ s.retrieved_at[:19] }}</td><td>{{ s.provider_mode }}</td></tr>
+{% endfor %}</table>
+</body>
+</html>

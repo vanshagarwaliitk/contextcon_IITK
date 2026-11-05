@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoreData</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d1d1f; --muted:#667; --line:#e2e4e8;
+          --fact:#1f5fbf; --fact-bg:#eaf1fb; --hyp:#a86400; --hyp-bg:#fff4e0; --rec:#1c7a3d; --rec-bg:#e7f6ec; --warn:#a32020; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141518; --card:#1d1f23; --ink:#e8e8ea; --muted:#9a9ca3; --line:#33363c;
+          --fact-bg:#18263b; --hyp-bg:#33270f; --rec-bg:#142a1b; --fact:#7fb0ff; --hyp:#f0b45a; --rec:#6fd391; --warn:#ff8a80; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  header { padding: 14px 16px; border-bottom: 1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size: 18px; margin: 0; } .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; background: var(--line); }
+  .badge.replay { background: #fdecea; color: var(--warn); }
+  main { display:grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border:1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+  label { display:block; font-size:12px; color: var(--muted); margin-top: 8px; }
+  input, textarea { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background: var(--bg); color: var(--ink); font: inherit; }
+  button { margin-top: 12px; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--fact); color:#fff; font-weight:600; cursor:pointer; }
+  button.secondary { background: var(--line); color: var(--ink); }
+  #timeline { max-height: 420px; overflow:auto; font-size: 12.5px; }
+  .ev { padding: 3px 0; border-bottom: 1px dashed var(--line); } .ev .st { color: var(--muted); font-weight: 600; margin-right: 6px; }
+  .ev.warn { color: #b06a00; } .ev.error { color: var(--warn); }
+  .tag { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:4px; margin-right:6px; }
+  .FACT { background: var(--fact-bg); color: var(--fact);} .HYP { background: var(--hyp-bg); color: var(--hyp);} .REC { background: var(--rec-bg); color: var(--rec);}
+  .sig { border-left: 3px solid var(--fact); padding: 6px 10px; margin: 6px 0; background: var(--bg); border-radius: 0 6px 6px 0; }
+  .sig.derived_metric { border-color: #888; } .sig.web_evidence { border-color: #7b4bd1; } .sig.leadership_change { border-color: #c2185b; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .hyp { border:1px solid var(--line); border-left: 4px solid var(--hyp); border-radius: 8px; padding: 10px 12px; margin: 10px 0; cursor:pointer; background: var(--hyp-bg); }
+  .strength { float:right; font-weight:700; } .High{color:var(--rec)} .Medium{color:var(--hyp)} .Low{color:var(--warn)}
+  #drawer { position: fixed; top:0; right:0; width: min(640px, 100%); height: 100%; background: var(--card); border-left:1px solid var(--line);
+            box-shadow: -8px 0 24px rgba(0,0,0,.15); overflow:auto; padding: 18px; transform: translateX(105%); transition: transform .2s; z-index: 10; }
+  #drawer.open { transform: none; }
+  table { width:100%; border-collapse: collapse; font-size: 12.5px; } td, th { text-align:left; border-bottom:1px solid var(--line); padding:4px; vertical-align: top; }
+  .contradicts { color: var(--warn); font-weight:600; } .supports { color: var(--rec); }
+  a { color: var(--fact); word-break: break-all; }
+  #confirm { display:none; } .cand { padding: 6px; border:1px solid var(--line); border-radius:6px; margin:6px 0; }
+  .stages span { display:inline-block; margin: 2px 4px 2px 0; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: var(--line); }
+  .stages .done { background: var(--rec-bg); color: var(--rec); } .stages .failed { background: #fdecea; color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>CoreData</h1><span class="meta">competitor intelligence from weak public signals</span>
+  <span id="mode" class="badge">…</span><span id="status" class="badge">idle</span>
+</header>
+<main>
+  <section>
+    <div class="card">
+      <h2>New investigation</h2>
+      <label>Competitor domain</label><input id="domain" placeholder="e.g. example.com">
+      <label>or company name</label><input id="name" placeholder="e.g. Example Inc">
+      <label>Question (optional)</label><input id="question" placeholder="Are they moving into robotics?">
+      <label>Peer / competitor set (comma-separated domains or names)</label><input id="competitors" placeholder="peer1.com, peer2.com">
+      <button id="start">Start investigation</button>
+      <label>…or open existing id</label><input id="openid" placeholder="inv_…"><button class="secondary" id="open">Open</button>
+    </div>
+    <div class="card" id="confirm">
+      <h2>Confirm company</h2>
+      <p class="meta">The match is ambiguous or name-only. Research stops until you confirm.</p>
+      <div id="cands"></div>
+      <label>…or correct the domain</label><input id="fixdomain"><button class="secondary" id="fix">Use this domain</button>
+    </div>
+    <div class="card">
+      <h2>Live investigation</h2>
+      <div class="stages" id="stages"></div>
+      <div class="meta" id="budget"></div>
+      <div id="timeline"></div>
+    </div>
+  </section>
+  <section>
+    <div class="card" id="overview"><h2>Company overview</h2><p class="meta">Start or open an investigation.</p></div>
+    <div class="card"><h2>Hypotheses <span class="meta">(click for the exact supporting and contradicting signals)</span></h2><div id="hyps"><p class="meta">—</p></div></div>
+    <div class="card"><h2>Brief</h2><div id="brief"><p class="meta">Report appears when the run completes.</p></div></div>
+    <div class="card"><h2>Signal timeline</h2><div id="signals"><p class="meta">—</p></div></div>
+  </section>
+</main>
+<aside id="drawer"></aside>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let INV = null, ES = null, REPORT = null, SIGS = {};
+
+fetch("/health").then(r => r.json()).then(h => { $("mode").textContent = h.provider_mode.toUpperCase(); if (h.provider_mode !== "live") $("mode").classList.add("replay"); });
+
+$("start").onclick = async () => {
+  const body = { domain: $("domain").value.trim() || null, company_name: $("name").value.trim() || null,
+                 user_question: $("question").value.trim() || null,
+                 competitors: $("competitors").value.split(",").map(s => s.trim()).filter(Boolean) };
+  const r = await fetch("/api/investigations", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body) });
+  if (!r.ok) { alert(await r.text()); return; }
+  open((await r.json()).id);
+};
+$("open").onclick = () => open($("openid").value.trim());
+$("fix").onclick = () => confirmCompany({ domain: $("fixdomain").value.trim() });
+
+function open(id) {
+  INV = id; location.hash = id; $("timeline").innerHTML = ""; $("hyps").innerHTML = "<p class='meta'>—</p>";
+  if (ES) ES.close();
+  ES = new EventSource(`/api/investigations/${id}/events`);
+  ES.onmessage = (m) => { const e = JSON.parse(m.data); addEvent(e); if (/Stage \w+ done|needs|Paused|Investigation/.test(e.message)) refresh(); };
+  ES.addEventListener("end", () => { ES.close(); refresh(); });
+  refresh();
+}
+
+function addEvent(e) {
+  const d = document.createElement("div"); d.className = "ev " + e.level;
+  d.innerHTML = `<span class="st">${esc(e.stage)}</span>${esc(e.message)}`;
+  $("timeline").appendChild(d); $("timeline").scrollTop = 1e9;
+}
+
+async function refresh() {
+  if (!INV) return;
+  const inv = await (await fetch(`/api/investigations/${INV}`)).json();
+  $("status").textContent = inv.status;
+  $("stages").innerHTML = ["resolve","baseline","scoping","probes","features","cluster","hypothesize","falsify","score","verify","brief"]
+    .map(s => `<span class="${inv.stages[s] || ''}">${s}</span>`).join("");
+  const b = inv.budget || {}; $("budget").textContent = `API calls ${b.calls ?? 0} · est. credits ${b.credits ?? 0}` + (inv.coverage ? ` · evidence coverage ${Math.round((inv.coverage.evidence_coverage||0)*100)}%` : "");
+  $("overview").innerHTML = `<h2>Company overview</h2><b>${esc(inv.resolved_name || inv.company_name || inv.domain)}</b>
+    <span class="meta">${esc(inv.resolved_domain || "")} · Crustdata id ${esc(inv.resolved_company_id ?? "not resolved")}</span>
+    <div class="meta">Question: ${esc(inv.user_question || "(data-driven scan)")} · Competitors: ${esc((inv.competitors||[]).map(c=>c.name).join(", ") || "none")}</div>
+    ${inv.warnings.length ? `<div class="meta" style="color:#b06a00">${inv.warnings.length} warning(s) — degraded gracefully</div>` : ""}`;
+  if (inv.status === "needs_confirmation") showConfirm(inv.candidates); else $("confirm").style.display = "none";
+  const sr = await fetch(`/api/investigations/${INV}/signals`); const sigs = sr.ok ? await sr.json() : [];
+  SIGS = Object.fromEntries(sigs.map(s => [s.id, s])); renderSignals(sigs);
+  if (["completed","completed_with_warnings"].includes(inv.status)) {
+    const rr = await fetch(`/api/investigations/${INV}/report`); if (rr.ok) { REPORT = await rr.json(); renderReport(); }
+  }
+}
+
+function showConfirm(cands) {
+  $("confirm").style.display = "block";
+  $("cands").innerHTML = (cands || []).map(c => `<div class="cand"><b>${esc(c.name)}</b> <span class="meta">${esc(c.primary_domain)} · id ${c.crustdata_company_id}</span>
+    <button class="secondary" onclick="confirmCompany({crustdata_company_id:${c.crustdata_company_id}})">This one</button></div>`).join("") || "<p class='meta'>No candidates found — correct the domain.</p>";
+}
+async function confirmCompany(body) {
+  await fetch(`/api/investigations/${INV}/confirm_company`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
+  open(INV);
+}
+
+function renderSignals(sigs) {
+  const ev = sigs.filter(s => !s.derived).sort((a,b) => (b.observed_at||"").localeCompare(a.observed_at||""));
+  const dm = sigs.filter(s => s.derived && !(s.theme_tags||[]).includes("baseline"));
+  $("signals").innerHTML = (ev.concat(dm)).map(sigCard).join("") || "<p class='meta'>No signals yet.</p>";
+}
+function sigCard(s) {
+  return `<div class="sig ${s.signal_type}"><span class="tag FACT">FACT</span><b>${esc(s.title)}</b>
+    <div>${esc(s.summary)}</div>
+    <div class="meta">${esc(s.id)} · ${esc(s.signal_type)} · observed ${esc((s.observed_at||"n/a").slice(0,10))} · source ${s.source_url ? `<a href="${esc(s.source_url)}" target="_blank" rel="noopener">${esc(s.source_name)}</a>` : esc(s.source_name)}
+    · retrieved ${esc((s.retrieved_at||"").slice(0,10))} · ${esc(s.provider_mode)}${s.status === "weak" ? " · <b>weak</b>" : ""}</div>
+    ${s.computation ? `<div class="meta">computed: ${esc(s.computation)}</div>` : ""}</div>`;
+}
+
+function renderReport() {
+  const r = REPORT;
+  $("hyps").innerHTML = r.hypotheses.map((h, i) => `<div class="hyp" onclick="drawer(${i})"><span class="tag HYP">HYPOTHESIS</span><b>${esc(h.title)}</b>
+     <span class="strength ${h.evidence_strength}">${esc(h.evidence_strength)} · ${esc((h.evidence_status||"").replace("_"," "))}</span>
+     <div>${esc(h.explanation)}</div><div class="meta">${h.supporting_signal_ids.length} supporting · ${h.contradicting_signal_ids.length} contradicting · ${h.tests.length} tests</div></div>`).join("")
+     || `<p>${r.outcome === "insufficient_evidence" ? "<b>Insufficient evidence</b> — no cluster met the minimum bar. This is a valid, honest result." : "No hypotheses."}</p>`;
+  const sec = (title, items, kind) => `<h3 style="font-size:13px;margin:12px 0 4px">${title}</h3>` + (items.map(s => {
+      const c = r.claims.find(c => c.id === (s.claim_ids||[])[0]);
+      const tag = !c ? "" : c.status === "unverified" ? `<span class="tag">NOT VERIFIED</span>` : c.claim_type === "fact" ? `<span class="tag FACT">FACT</span>` : c.claim_type === "hypothesis" ? `<span class="tag HYP">HYPOTHESIS</span>` : `<span class="tag REC">RECOMMENDATION</span>`;
+      return `<div style="margin:4px 0">${tag}${esc(s.text)} <span class="meta">[${(s.claim_ids||[]).join(", ")}]</span></div>`; }).join("") || "<p class='meta'>—</p>");
+  const S = r.sections;
+  $("brief").innerHTML = `${r.scope.provider_mode !== "live" ? `<div class="tag" style="background:#fdecea;color:#a32020">Contains replayed/seeded data</div>` : ""}
+    <div class="meta">Evidence coverage ${Math.round((r.coverage.evidence_coverage||0)*100)}% of factual claims sourced · writer: ${esc(S.writer)}</div>
+    ${sec("Executive summary", S.executive_summary)}${sec("Key findings", S.key_findings)}${sec("Hypotheses", S.hypotheses)}
+    ${sec("Counter-evidence & alternatives", S.counter_evidence_and_alternatives)}${sec("Unknowns", S.unknowns)}${sec("Recommended next indicators", S.recommended_next_indicators)}
+    <button onclick="window.open('/api/investigations/${INV}/brief')">Open printable brief</button>
+    <button class="secondary" onclick="location.href='/api/investigations/${INV}/export'">Export (PDF / HTML)</button>`;
+}
+
+function drawer(i) {
+  const h = REPORT.hypotheses[i], S = Object.fromEntries(REPORT.signals.map(s => [s.id, s]));
+  const rows = (ids, cls) => ids.map(id => S[id]).filter(Boolean).map(s => `<tr><td>${s.id}</td><td class="${cls}">${esc(s.summary)}</td>
+      <td>${s.source_url ? `<a href="${esc(s.source_url)}" target="_blank" rel="noopener">${esc(s.source_name)}</a>` : esc(s.source_name)}</td><td>${esc((s.retrieved_at||"").slice(0,10))}</td></tr>`).join("") || `<tr><td colspan=4 class="meta">none</td></tr>`;
+  const bd = h.score_breakdown || {};
+  $("drawer").innerHTML = `<button class="secondary" onclick="$('drawer').classList.remove('open')">Close</button>
+    <h2><span class="tag HYP">HYPOTHESIS</span>${esc(h.title)}</h2><p>${esc(h.explanation)}</p>
+    <p><b class="${h.evidence_strength}">${esc(h.evidence_strength)}</b> · ${esc(h.evidence_status)} · type ${esc(h.hypothesis_type)}</p>
+    <h3>Supporting signals</h3><table>${rows(h.supporting_signal_ids, "supports")}</table>
+    <h3>Contradicting signals</h3><table>${rows(h.contradicting_signal_ids, "contradicts")}</table>
+    <h3>Falsification tests</h3><table>${h.tests.map(t => `<tr><td>${esc(t.test_id)}</td><td class="${t.outcome}">${esc(t.outcome)}</td><td>${esc(t.explanation)}</td></tr>`).join("")}</table>
+    <h3>Alternatives</h3><ul>${h.alternatives.map(a => `<li>${esc(a.ref)}: ${esc(a.statement)}</li>`).join("")}</ul>
+    <h3>Evidence gaps</h3><ul>${h.evidence_gaps.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
+    <h3><span class="tag REC">RECOMMENDATION</span>Next indicators</h3><ul>${h.recommended_next_indicators.map(g => `<li>${esc(g)}</li>`).join("")}</ul>
+    <details><summary>Score breakdown (rule-based)</summary><table>${(bd.rules||[]).map(r => `<tr><td>${esc(r.rule)}</td><td>${r.points}</td><td>${esc(r.reason)}</td></tr>`).join("")}</table>
+    <p class="meta">Caps: ${esc((bd.caps_applied||[]).join("; ") || "none")}</p></details>
+    <button class="secondary" onclick="fetch('/api/investigations/${INV}/watchlist',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({item_type:'hypothesis',item_id:'${h.id}'})}).then(()=>alert('Added to watchlist'))">Add to watchlist</button>`;
+  $("drawer").classList.add("open");
+}
+
+if (location.hash.length > 1) open(location.hash.slice(1));
+</script>
+</body>
+</html>
