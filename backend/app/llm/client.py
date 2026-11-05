@@ -61,7 +61,10 @@ class LLM:
         if self.settings.fail_llm:
             raise LLMError("LLM disabled (FAIL_LLM=1)")
         if self._client is None:
-            self._client = anthropic.Anthropic(max_retries=2)
+            options = {"max_retries": 2}
+            if self.settings.anthropic_api_key:
+                options["api_key"] = self.settings.anthropic_api_key
+            self._client = anthropic.Anthropic(**options)
         return self._client
 
     def _extra(self) -> dict:

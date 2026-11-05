@@ -3,7 +3,8 @@ import pytest
 import respx
 
 from app.providers.crustdata.client import (
-    Budget, BudgetExceeded, CrustdataBadRequest, CrustdataClient, CrustdataServerError, CrustdataUnavailable, ReplayMiss,
+    Budget, BudgetExceeded, CrustdataAuthError, CrustdataBadRequest, CrustdataClient, CrustdataServerError,
+    CrustdataUnavailable, ReplayMiss,
 )
 from dataclasses import replace
 
@@ -21,6 +22,23 @@ def test_headers_present(db, settings):
     req = route.calls[0].request
     assert req.headers["authorization"] == "Bearer test-key"
     assert req.headers["x-api-version"] == "2025-11-01"
+
+
+@respx.mock
+def test_crustdata_api_key_is_sent_from_settings(db, settings):
+    expected_key = "custom-test-key"
+    settings = replace(settings, crustdata_api_key=expected_key)
+    route = respx.post(URL).mock(return_value=httpx.Response(200, json={"total_count": 1}))
+
+    client(db, settings).post("/job/search", {"limit": 0})
+
+    assert route.calls[0].request.headers["authorization"] == f"Bearer {expected_key}"
+
+
+def test_missing_api_key_fails_before_request(db, settings):
+    c = client(db, replace(settings, crustdata_api_key=""))
+    with pytest.raises(CrustdataAuthError, match="CRUSTDATA_API_KEY is not set"):
+        c.post("/job/search", {"limit": 0})
 
 
 @respx.mock

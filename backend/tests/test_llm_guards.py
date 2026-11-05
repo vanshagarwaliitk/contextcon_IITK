@@ -83,6 +83,22 @@ def test_repair_loop_then_success(settings):
     assert fake.calls[0]["model"] == settings.llm_model and "temperature" not in fake.calls[0]
 
 
+def test_anthropic_client_uses_settings_api_key(settings, monkeypatch):
+    seen = {}
+
+    def create_client(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("app.llm.client.anthropic.Anthropic", create_client)
+    settings.anthropic_api_key = "user-provided-anthropic-key"
+
+    LLM(settings=settings).client
+
+    assert seen["api_key"] == settings.anthropic_api_key
+    assert seen["max_retries"] == 2
+
+
 def test_fallback_after_two_repairs(settings):
     bad = _h("Signals suggest 40 postings.")
     llm = LLM(settings=settings, client=FakeAnthropic([bad, bad, bad]))

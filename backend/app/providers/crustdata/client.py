@@ -125,6 +125,7 @@ class CrustdataClient:
                 "x-api-version": self.settings.crustdata_api_version,
             },
         )
+        self._http.headers["authorization"] = f"Bearer {self.settings.crustdata_api_key}"
 
     @property
     def mode(self) -> str:
@@ -146,6 +147,12 @@ class CrustdataClient:
             self._log(investigation_id, endpoint, label, 200, 0.0, None, 0, cache_hit=True)
             self._cache[key] = data
             return data
+
+        if not self.settings.crustdata_api_key.strip():
+            raise CrustdataAuthError(
+                "CRUSTDATA_API_KEY is not set; add it to the repository-root .env file",
+                endpoint=endpoint,
+            )
 
         self.budget.check()
         start = time.monotonic()

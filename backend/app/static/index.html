@@ -20,6 +20,7 @@
   .card h2 { font-size: 15px; margin: 0 0 10px; }
   label { display:block; font-size:12px; color: var(--muted); margin-top: 8px; }
   input, textarea { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background: var(--bg); color: var(--ink); font: inherit; }
+  .key-note { margin: 6px 0; }
   button { margin-top: 12px; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--fact); color:#fff; font-weight:600; cursor:pointer; }
   button.secondary { background: var(--line); color: var(--ink); }
   #timeline { max-height: 420px; overflow:auto; font-size: 12.5px; }
@@ -56,6 +57,9 @@
       <label>or company name</label><input id="name" placeholder="e.g. Example Inc">
       <label>Question (optional)</label><input id="question" placeholder="Are they moving into robotics?">
       <label>Peer / competitor set (comma-separated domains or names)</label><input id="competitors" placeholder="peer1.com, peer2.com">
+      <label>Anthropic API key</label><input id="anthropic-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+      <label>Crustdata API key</label><input id="crustdata-key" type="password" autocomplete="off" spellcheck="false" placeholder="Your Crustdata key">
+      <p class="meta key-note">Keys are sent to this server for the investigation and are not saved to the database or browser storage. Use HTTPS when hosting this app.</p>
       <button id="start">Start investigation</button>
       <label>…or open existing id</label><input id="openid" placeholder="inv_…"><button class="secondary" id="open">Open</button>
     </div>
@@ -83,20 +87,29 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-let INV = null, ES = null, REPORT = null, SIGS = {};
+let INV = null, ES = null, REPORT = null, SIGS = {}, API_KEYS = {};
 
 fetch("/health").then(r => r.json()).then(h => { $("mode").textContent = h.provider_mode.toUpperCase(); if (h.provider_mode !== "live") $("mode").classList.add("replay"); });
 
 $("start").onclick = async () => {
+  API_KEYS = readApiKeys();
   const body = { domain: $("domain").value.trim() || null, company_name: $("name").value.trim() || null,
                  user_question: $("question").value.trim() || null,
-                 competitors: $("competitors").value.split(",").map(s => s.trim()).filter(Boolean) };
+                 competitors: $("competitors").value.split(",").map(s => s.trim()).filter(Boolean),
+                 ...API_KEYS };
   const r = await fetch("/api/investigations", { method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body) });
   if (!r.ok) { alert(await r.text()); return; }
   open((await r.json()).id);
 };
 $("open").onclick = () => open($("openid").value.trim());
 $("fix").onclick = () => confirmCompany({ domain: $("fixdomain").value.trim() });
+
+function readApiKeys() {
+  return {
+    anthropic_api_key: $("anthropic-key").value.trim(),
+    crustdata_api_key: $("crustdata-key").value.trim()
+  };
+}
 
 function open(id) {
   INV = id; location.hash = id; $("timeline").innerHTML = ""; $("hyps").innerHTML = "<p class='meta'>—</p>";
@@ -138,7 +151,11 @@ function showConfirm(cands) {
     <button class="secondary" onclick="confirmCompany({crustdata_company_id:${c.crustdata_company_id}})">This one</button></div>`).join("") || "<p class='meta'>No candidates found — correct the domain.</p>";
 }
 async function confirmCompany(body) {
-  await fetch(`/api/investigations/${INV}/confirm_company`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
+  API_KEYS = readApiKeys();
+  const r = await fetch(`/api/investigations/${INV}/confirm_company`, {
+    method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({...body, ...API_KEYS})
+  });
+  if (!r.ok) { alert(await r.text()); return; }
   open(INV);
 }
 
