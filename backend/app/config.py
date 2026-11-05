@@ -20,6 +20,7 @@ class Settings:
     crustdata_api_key: str = field(default_factory=lambda: os.getenv("CRUSTDATA_API_KEY", ""))
     crustdata_base_url: str = field(default_factory=lambda: os.getenv("CRUSTDATA_BASE_URL", "https://api.crustdata.com"))
     crustdata_api_version: str = "2025-11-01"
+    anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
 
     llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "claude-opus-5-5"))
     llm_effort: str = field(default_factory=lambda: os.getenv("LLM_EFFORT", "medium"))

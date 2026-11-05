@@ -4,14 +4,15 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
-from .config import get_settings
+from .config import Settings, get_settings
 from .db import DB, loads, now_iso
 from .models import load_signals
 from .pipeline import brief as brief_mod
@@ -32,11 +33,20 @@ class CreateInvestigation(BaseModel):
     user_question: Optional[str] = None
     competitors: list[str] = []
     auto_run: bool = True
+    crustdata_api_key: Optional[SecretStr] = None
+    anthropic_api_key: Optional[SecretStr] = None
 
 
 class ConfirmCompany(BaseModel):
     crustdata_company_id: Optional[int] = None
     domain: Optional[str] = None  # correct the input instead of picking a candidate
+    crustdata_api_key: Optional[SecretStr] = None
+    anthropic_api_key: Optional[SecretStr] = None
+
+
+class RunInvestigation(BaseModel):
+    crustdata_api_key: Optional[SecretStr] = None
+    anthropic_api_key: Optional[SecretStr] = None
 
 
 class WatchItem(BaseModel):
@@ -52,14 +62,25 @@ def _get(inv_id: str) -> dict:
     return inv
 
 
-def _start(inv_id: str) -> bool:
+def _settings_for_request(body: CreateInvestigation | ConfirmCompany | RunInvestigation) -> Settings:
+    settings = get_settings()
+    crustdata_key = body.crustdata_api_key.get_secret_value() if body.crustdata_api_key else settings.crustdata_api_key
+    anthropic_key = body.anthropic_api_key.get_secret_value() if body.anthropic_api_key else settings.anthropic_api_key
+    if settings.provider_mode == "live" and not crustdata_key.strip():
+        raise HTTPException(400, "Crustdata API key is required in live mode")
+    if settings.provider_mode == "live" and not anthropic_key.strip():
+        raise HTTPException(400, "Anthropic API key is required in live mode")
+    return replace(settings, crustdata_api_key=crustdata_key, anthropic_api_key=anthropic_key)
+
+
+def _start(inv_id: str, settings: Settings | None = None) -> bool:
     if inv_id in _running:
         return False
     _running.add(inv_id)
 
     def work() -> None:
         try:
-            run_investigation(inv_id)
+            run_investigation(inv_id, settings=settings)
         finally:
             _running.discard(inv_id)
 
@@ -83,11 +104,11 @@ def index() -> FileResponse:
 def create(body: CreateInvestigation) -> dict:
     if not (body.company_name or body.domain):
         raise HTTPException(400, "company_name or domain is required")
-    s = get_settings()
+    s = _settings_for_request(body)
     inv_id = db().create_investigation(body.company_name, body.domain, body.user_question,
                                        body.competitors, provider_mode=s.provider_mode)
     if body.auto_run:
-        _start(inv_id)
+        _start(inv_id, s)
     return {"id": inv_id, "status": "running" if body.auto_run else "created"}
 
 
@@ -114,17 +135,18 @@ def get_investigation(inv_id: str) -> dict:
 
 
 @app.post("/api/investigations/{inv_id}/run")
-def run(inv_id: str) -> dict:
+def run(inv_id: str, body: RunInvestigation | None = None) -> dict:
     inv = _get(inv_id)
     if inv["status"] == "needs_confirmation":
         raise HTTPException(409, "confirm the company first")
-    started = _start(inv_id)
+    started = _start(inv_id, _settings_for_request(body or RunInvestigation()))
     return {"id": inv_id, "started": started}
 
 
 @app.post("/api/investigations/{inv_id}/confirm_company")
 def confirm_company(inv_id: str, body: ConfirmCompany) -> dict:
     inv = _get(inv_id)
+    settings = _settings_for_request(body)
     d = db()
     cands = loads(inv["candidates_json"], [])
     if body.crustdata_company_id is not None:
@@ -140,7 +162,7 @@ def confirm_company(inv_id: str, body: ConfirmCompany) -> dict:
         raise HTTPException(400, "give crustdata_company_id or domain")
     reset_from(d, inv_id, "resolve")
     d.emit_event(inv_id, "resolve", "info", "Company confirmed by user")
-    _start(inv_id)
+    _start(inv_id, settings)
     return {"id": inv_id, "started": True}
 
 
