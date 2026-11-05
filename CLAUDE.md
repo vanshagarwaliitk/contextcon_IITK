@@ -6,6 +6,7 @@ Specs: `coredata/docs/sytem_impl.docx` (PRD) and `coredata/docs/PLAYBOOK.md` (ar
 - `backend/app/providers/crustdata/` — every Crustdata call goes through `client.py` (budget, cache, record/replay, retries, api_logs).
 - `backend/app/pipeline/` — staged deterministic pipeline; `runner.py` lists the stages in order.
 - `backend/app/llm/` — Claude wrapper (`client.py`), output schemas, prompts `prompts/b1..b7`.
+- `frontend/` — React + Vite + Recharts UI (`npm run build` -> `frontend/dist`, served by FastAPI at /). `backend/app/static/index.html` is the no-build fallback.
 - `backend/tests/` — `conftest.py` has a fake Crustdata server + `ScriptedLLM`.
 
 ## Rules (do not break)

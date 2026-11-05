@@ -52,17 +52,23 @@ Copy `.env.example` to `.env` and fill in `CRUSTDATA_API_KEY` and `ANTHROPIC_API
    ```bash
    .venv/Scripts/python -m scripts.discover example.com --theme "robotics" --record
    ```
-2. **Run the app** at http://localhost:8000:
+2. **Build the UI once** (React + Vite + Recharts in `frontend/`; needs Node 18+):
+   ```bash
+   cd frontend && npm install && npm run build
+   ```
+3. **Run the app** at http://localhost:8000. FastAPI serves `frontend/dist`, or a basic fallback page if you haven't built the UI:
    ```bash
    .venv/Scripts/python -m uvicorn app.main:app --app-dir backend --port 8000
    ```
-   The UI asks for Anthropic and Crustdata API keys when starting an investigation. Keys are used for that run
-   and are not stored in SQLite or browser storage. For deployments, serve the UI over HTTPS.
-3. **Or run from the CLI:**
+   The UI asks for Anthropic and Crustdata API keys when starting an investigation (leave them blank to use the
+   keys from `.env`). Keys are used for that run and are not stored in SQLite or browser storage. For deployments,
+   serve the UI over HTTPS.
+   For UI development with hot reload, keep the backend running and use `cd frontend && npm run dev`, then open http://localhost:5173 (API calls are proxied to :8000).
+4. **Or run from the CLI:**
    ```bash
    .venv/Scripts/python -m scripts.run_investigation --domain example.com --question "Are they moving into robotics?" --competitors peer1.com,peer2.com --html brief.html
    ```
-4. **Tests** (fake Crustdata and scripted LLM; no keys or credits needed):
+5. **Tests** (fake Crustdata and scripted LLM; no keys or credits needed):
    ```bash
    cd backend && ../.venv/Scripts/python -m pytest -q
    ```

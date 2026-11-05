@@ -53,6 +53,8 @@ class Ctx:
             "calls": self.crust.budget.calls,
             "credits": round(self.crust.budget.credits, 2),
             "unverified_cost_calls": self.crust.budget.unverified_cost_calls,
+            "max_calls": self.crust.budget.max_calls,
+            "max_credits": self.crust.budget.max_credits,
         }
         self.state["llm_usage"] = self.llm.usage
         self.db.update_investigation(self.inv_id, stage_state_json=json.dumps(self.state, default=str))

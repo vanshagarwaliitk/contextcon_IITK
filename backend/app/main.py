@@ -17,8 +17,11 @@ from .db import DB, loads, now_iso
 from .models import load_signals
 from .pipeline import brief as brief_mod
 from .pipeline.runner import reset_from, run_investigation
+from .providers.crustdata.jobs import windows as job_windows
+from datetime import date
 
 STATIC = Path(__file__).with_name("static")
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 app = FastAPI(title="CoreData", version="0.1.0")
 _running: set[str] = set()
 
@@ -92,12 +95,47 @@ def _start(inv_id: str, settings: Settings | None = None) -> bool:
 def health() -> dict:
     s = get_settings()
     return {"ok": True, "provider_mode": s.provider_mode, "model": s.llm_model,
-            "crustdata_key": bool(s.crustdata_api_key), "people": s.enable_people, "web": s.enable_web}
+            "crustdata_key": bool(s.crustdata_api_key), "anthropic_key": bool(s.anthropic_api_key),
+            "people": s.enable_people, "web": s.enable_web, "factors": s.enable_factors}
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+    """React build (frontend/dist) when present, else the zero-build fallback page."""
+    built = FRONTEND_DIST / "index.html"
+    return FileResponse(built if built.exists() else STATIC / "index.html")
+
+
+@app.get("/assets/{path:path}")
+def assets(path: str) -> FileResponse:
+    f = (FRONTEND_DIST / "assets" / path).resolve()
+    if not str(f).startswith(str((FRONTEND_DIST / "assets").resolve())) or not f.is_file():
+        raise HTTPException(404)
+    return FileResponse(f)
+
+
+@app.get("/api/investigations/{inv_id}/insights")
+def insights(inv_id: str) -> dict:
+    """Chart data: themes, computed features, per-theme ledger (counts, geo, peers), budget, emerging terms."""
+    inv = _get(inv_id)
+    state = loads(inv["stage_state_json"], {}) or {}
+    themes = [loads(r["definition_json"], {}) for r in db().query(
+        "SELECT definition_json FROM themes WHERE investigation_id=? ORDER BY id", (inv_id,))]
+    ledger = state.get("ledger", {})
+    base = state.get("baseline", {})
+    return {
+        "themes": themes,
+        "features": state.get("features", {}),
+        "ledger": {tid: {k: v for k, v in led.items() if k not in ("count_bodies",)} for tid, led in ledger.items()},
+        "baseline_totals": {w: (base.get(f"{w}:count") or {}).get("value") for w in ("recent", "prior", "older")},
+        "windows": {k: {"start": str(w.start), "end": str(w.end), "days": w.days}
+                    for k, w in job_windows(date.fromisoformat(state["today"]) if state.get("today") else None).items()},
+        "emerging_terms": state.get("emerging_terms", []),
+        "competitors": state.get("competitors", []),
+        "budget": state.get("budget", {}),
+        "llm_usage": state.get("llm_usage", {}),
+        "outcome": state.get("outcome"),
+    }
 
 
 @app.post("/api/investigations")

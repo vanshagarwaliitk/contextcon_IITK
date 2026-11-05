@@ -5,6 +5,9 @@ PY ?= .venv/Scripts/python
 install:
 	python -m venv .venv && $(PY) -m pip install -r requirements.txt
 
+ui:
+	cd frontend && npm install && npm run build
+
 dev:
 	$(PY) -m uvicorn app.main:app --app-dir backend --reload --port 8000
 
