@@ -36,6 +36,9 @@
   #drawer { position: fixed; top:0; right:0; width: min(640px, 100%); height: 100%; background: var(--card); border-left:1px solid var(--line);
             box-shadow: -8px 0 24px rgba(0,0,0,.15); overflow:auto; padding: 18px; transform: translateX(105%); transition: transform .2s; z-index: 10; }
   #drawer.open { transform: none; }
+  dialog { width:min(440px, calc(100% - 32px)); border:1px solid var(--line); border-radius:10px; padding:18px; color:var(--ink); background:var(--card); }
+  dialog::backdrop { background:rgba(0,0,0,.45); }
+  .dialog-actions { display:flex; gap:8px; flex-wrap:wrap; }
   table { width:100%; border-collapse: collapse; font-size: 12.5px; } td, th { text-align:left; border-bottom:1px solid var(--line); padding:4px; vertical-align: top; }
   .contradicts { color: var(--warn); font-weight:600; } .supports { color: var(--rec); }
   a { color: var(--fact); word-break: break-all; }
@@ -48,6 +51,7 @@
 <header>
   <h1>CoreData</h1><span class="meta">competitor intelligence from weak public signals</span>
   <span id="mode" class="badge">…</span><span id="status" class="badge">idle</span>
+  <button id="open-settings" class="secondary" style="margin-left:auto">Settings</button>
 </header>
 <main>
   <section>
@@ -57,9 +61,7 @@
       <label>or company name</label><input id="name" placeholder="e.g. Example Inc">
       <label>Question (optional)</label><input id="question" placeholder="Are they moving into robotics?">
       <label>Peer / competitor set (comma-separated domains or names)</label><input id="competitors" placeholder="peer1.com, peer2.com">
-      <label>Anthropic API key</label><input id="anthropic-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
-      <label>Crustdata API key</label><input id="crustdata-key" type="password" autocomplete="off" spellcheck="false" placeholder="Your Crustdata key">
-      <p class="meta key-note">Keys are sent to this server for the investigation and are not saved to the database or browser storage. Use HTTPS when hosting this app.</p>
+      <p id="key-status" class="meta key-note">Set provider API keys in Settings before starting a live investigation.</p>
       <button id="start">Start investigation</button>
       <label>…or open existing id</label><input id="openid" placeholder="inv_…"><button class="secondary" id="open">Open</button>
     </div>
@@ -84,6 +86,21 @@
   </section>
 </main>
 <aside id="drawer"></aside>
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <form id="settings-form">
+    <h2 id="settings-title">API key settings</h2>
+    <p class="meta">Keys stay in this page's memory, are sent to this server for investigations, and are cleared when you reload or close the page. Use HTTPS when hosting this app.</p>
+    <label for="anthropic-key">Anthropic API key</label>
+    <input id="anthropic-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-ant-…" aria-label="Anthropic API key">
+    <label for="crustdata-key">Crustdata API key</label>
+    <input id="crustdata-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Your Crustdata key" aria-label="Crustdata API key">
+    <div class="dialog-actions">
+      <button type="submit">Save for this page</button>
+      <button type="button" class="secondary" id="clear-settings">Clear keys</button>
+      <button type="button" class="secondary" id="close-settings">Cancel</button>
+    </div>
+  </form>
+</dialog>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -91,8 +108,36 @@ let INV = null, ES = null, REPORT = null, SIGS = {}, API_KEYS = {};
 
 fetch("/health").then(r => r.json()).then(h => { $("mode").textContent = h.provider_mode.toUpperCase(); if (h.provider_mode !== "live") $("mode").classList.add("replay"); });
 
+function updateKeyStatus() {
+  const ready = Boolean(API_KEYS.anthropic_api_key && API_KEYS.crustdata_api_key);
+  $("key-status").textContent = ready
+    ? "Provider API keys are set for this page."
+    : "Set provider API keys in Settings before starting a live investigation.";
+}
+
+$("open-settings").onclick = () => {
+  $("anthropic-key").value = API_KEYS.anthropic_api_key || "";
+  $("crustdata-key").value = API_KEYS.crustdata_api_key || "";
+  $("settings-dialog").showModal();
+};
+$("close-settings").onclick = () => $("settings-dialog").close();
+$("settings-form").onsubmit = (event) => {
+  event.preventDefault();
+  API_KEYS = {
+    anthropic_api_key: $("anthropic-key").value.trim(),
+    crustdata_api_key: $("crustdata-key").value.trim()
+  };
+  updateKeyStatus();
+  $("settings-dialog").close();
+};
+$("clear-settings").onclick = () => {
+  API_KEYS = {};
+  $("anthropic-key").value = "";
+  $("crustdata-key").value = "";
+  updateKeyStatus();
+};
+
 $("start").onclick = async () => {
-  API_KEYS = readApiKeys();
   const body = { domain: $("domain").value.trim() || null, company_name: $("name").value.trim() || null,
                  user_question: $("question").value.trim() || null,
                  competitors: $("competitors").value.split(",").map(s => s.trim()).filter(Boolean),
@@ -103,13 +148,6 @@ $("start").onclick = async () => {
 };
 $("open").onclick = () => open($("openid").value.trim());
 $("fix").onclick = () => confirmCompany({ domain: $("fixdomain").value.trim() });
-
-function readApiKeys() {
-  return {
-    anthropic_api_key: $("anthropic-key").value.trim(),
-    crustdata_api_key: $("crustdata-key").value.trim()
-  };
-}
 
 function open(id) {
   INV = id; location.hash = id; $("timeline").innerHTML = ""; $("hyps").innerHTML = "<p class='meta'>—</p>";
@@ -151,7 +189,6 @@ function showConfirm(cands) {
     <button class="secondary" onclick="confirmCompany({crustdata_company_id:${c.crustdata_company_id}})">This one</button></div>`).join("") || "<p class='meta'>No candidates found — correct the domain.</p>";
 }
 async function confirmCompany(body) {
-  API_KEYS = readApiKeys();
   const r = await fetch(`/api/investigations/${INV}/confirm_company`, {
     method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({...body, ...API_KEYS})
   });

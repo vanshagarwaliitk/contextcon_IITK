@@ -56,8 +56,9 @@ Copy `.env.example` to `.env` and fill in `CRUSTDATA_API_KEY` and `ANTHROPIC_API
    ```bash
    .venv/Scripts/python -m uvicorn app.main:app --app-dir backend --port 8000
    ```
-   The UI asks for Anthropic and Crustdata API keys when starting an investigation. Keys are used for that run
-   and are not stored in SQLite or browser storage. For deployments, serve the UI over HTTPS.
+   Enter Anthropic and Crustdata API keys through **Settings** in the UI. Keys stay in page memory for the
+   current tab, are not stored in SQLite or browser storage, and are cleared on reload. For deployments, serve
+   the UI over HTTPS.
 3. **Or run from the CLI:**
    ```bash
    .venv/Scripts/python -m scripts.run_investigation --domain example.com --question "Are they moving into robotics?" --competitors peer1.com,peer2.com --html brief.html
