@@ -15,11 +15,23 @@ export function ApiKeys({ health, onChange, compact }) {
     onChange?.();
   };
   const envHint = (has) => (has ? "Optional — the server .env has one" : live ? "Required — no key in the server .env" : "Not needed in replay mode");
+  const account = health?.claude_account && health?.llm_backend !== "api";
+  const anthropicHint = health?.anthropic_key
+    ? envHint(true)
+    : account
+      ? "Optional — leave empty to use your Claude account"
+      : envHint(false);
   return (
     <div style={{ marginTop: compact ? 10 : 14, paddingTop: compact ? 0 : 12, borderTop: compact ? 0 : "1px solid var(--line)" }}>
+      {account && !health?.anthropic_key && (
+        <div className="banner" style={{ background: "var(--violet-bg)", color: "var(--violet)", marginTop: 0, marginBottom: 10 }}>
+          Claude runs through your logged-in Claude account (Claude Code on this computer). No Anthropic key needed.
+          Usage counts against your Claude plan.
+        </div>
+      )}
       <div className="form-grid">
         <label className="field">
-          Anthropic API key <span className="faint">· {envHint(health?.anthropic_key)}</span>
+          Anthropic API key <span className="faint">· {anthropicHint}</span>
           <input type="password" autoComplete="off" spellCheck="false" value={keys.anthropic_api_key}
                  onChange={update("anthropic_api_key")} placeholder="sk-ant-…" />
         </label>

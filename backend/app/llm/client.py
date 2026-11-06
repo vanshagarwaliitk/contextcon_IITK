@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from ..config import Settings, get_settings
 from ..db import DB, now_iso
+from . import claude_cli
 
 log = logging.getLogger("coredata.llm")
 PROMPTS = Path(__file__).with_name("prompts")
@@ -54,12 +55,17 @@ class LLM:
         self.settings = settings or get_settings()
         self.db = db
         self._client = client
-        self.usage = {"input_tokens": 0, "output_tokens": 0, "calls": 0}
+        # "api" (Anthropic API key) | "claude_cli" (user's Claude account via Claude Code) | "none"
+        self.backend = "api" if client is not None else claude_cli.resolve_backend(self.settings)
+        self.usage = {"input_tokens": 0, "output_tokens": 0, "calls": 0, "backend": self.backend, "cost_usd": 0.0}
 
     @property
     def client(self) -> Any:
         if self.settings.fail_llm:
             raise LLMError("LLM disabled (FAIL_LLM=1)")
+        if self.backend == "none":
+            raise LLMError("no Claude available: set an Anthropic API key, or install Claude Code and log in "
+                           "to use your Claude account")
         if self._client is None:
             options = {"max_retries": 2}
             if self.settings.anthropic_api_key:
@@ -92,6 +98,8 @@ class LLM:
         system: str | None = None,
     ) -> T:
         prompt = render(prompt_file, variables)
+        if self.backend == "claude_cli" and self._client is None:
+            return self._structured_cli(prompt_file, prompt, model_cls, validator, max_repairs, effort, system)
         messages: list[dict] = [{"role": "user", "content": prompt}]
         errors: list[str] = []
         for attempt in range(max_repairs + 1):
@@ -131,6 +139,41 @@ class LLM:
                     + "\n- ".join(errors[:15])
                     + "\nReturn a corrected, complete output that fixes every error. Follow all original rules.",
                 }
+            )
+        raise LLMValidationError(errors)
+
+    # ------------------------------------------------------------------ Claude account (CLI) backend
+    def _structured_cli(self, label: str, prompt: str, model_cls: type[T], validator, max_repairs: int,
+                        effort: str | None, system: str | None) -> T:
+        if self.settings.fail_llm:
+            raise LLMError("LLM disabled (FAIL_LLM=1)")
+        schema = model_cls.model_json_schema()
+        errors: list[str] = []
+        attempt_prompt = prompt
+        for attempt in range(max_repairs + 1):
+            try:
+                data, meta = claude_cli.run_structured(self.settings, attempt_prompt, schema,
+                                                       effort or self.settings.llm_effort, system)
+            except claude_cli.ClaudeCLIError as exc:
+                raise LLMError(str(exc)) from exc
+            self.usage["calls"] += 1
+            self.usage["input_tokens"] += meta["input_tokens"] or 0
+            self.usage["output_tokens"] += meta["output_tokens"] or 0
+            self.usage["cost_usd"] = round(self.usage["cost_usd"] + meta["cost_usd"], 4)
+            log.info("llm(cli) %s attempt %d %sms $%.4f", label, attempt + 1, meta["duration_ms"], meta["cost_usd"])
+            try:
+                parsed = model_cls.model_validate(data)
+                errors = validator(parsed) if validator else []
+            except ValueError as exc:  # pydantic ValidationError subclasses ValueError
+                parsed, errors = None, [f"schema validation: {str(exc)[:400]}"]
+            if not errors:
+                return parsed
+            log.warning("llm(cli) %s attempt %d failed validation: %s", label, attempt + 1, errors)
+            # stateless CLI call: resend the task with the previous answer and the errors appended
+            attempt_prompt = (
+                f"{prompt}\n\n---\nYOUR PREVIOUS OUTPUT:\n{json.dumps(data, ensure_ascii=False)[:12000]}\n\n"
+                "It failed validation:\n- " + "\n- ".join(errors[:15])
+                + "\nReturn a corrected, complete output that fixes every error. Follow all original rules."
             )
         raise LLMValidationError(errors)
 

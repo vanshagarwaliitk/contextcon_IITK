@@ -26,6 +26,11 @@ class Settings:
     llm_effort: str = field(default_factory=lambda: os.getenv("LLM_EFFORT", "medium"))
     llm_fallbacks: bool = field(default_factory=lambda: _bool("LLM_FALLBACKS", "1"))
     fail_llm: bool = field(default_factory=lambda: _bool("FAIL_LLM"))
+    # Where Claude runs: "api" (Anthropic API key), "claude_cli" (your logged-in Claude account via the
+    # Claude Code CLI, no key needed), or "auto" (api if a key is set, else claude_cli if installed).
+    llm_backend: str = field(default_factory=lambda: os.getenv("LLM_BACKEND", "auto").strip().lower())
+    claude_cli_path: str = field(default_factory=lambda: os.getenv("CLAUDE_CLI_PATH", "claude"))
+    claude_cli_timeout: int = field(default_factory=lambda: int(os.getenv("CLAUDE_CLI_TIMEOUT", "300")))
 
     provider_mode: str = field(default_factory=lambda: os.getenv("PROVIDER_MODE", "live"))
     record: bool = field(default_factory=lambda: _bool("RECORD"))

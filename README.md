@@ -38,7 +38,21 @@ flowchart LR
 | Verifier (B6) | unsupported facts relabelled "unverified" |
 | Brief writer (B7) | may only cite ledger claim ids; unverified only in Unknowns |
 
-## Setup
+## Quick start (no commands)
+
+**Web UI (Windows):** double-click `CoreData-Web.bat`. It starts the server and opens http://localhost:8000. Close the window to stop it.
+
+**Guided terminal wizard:** on Windows, double-click `CoreData.bat`. On Mac/Linux, run `./coredata.sh`.
+
+On first run, the launcher creates the Python environment and installs everything. It then asks a few plain questions:
+1. **Your API keys**: an Anthropic key (`sk-ant-…`) and a Crustdata key. Keys already in `.env` are reused. A Gemini or OpenAI key is caught and you're asked again. You can optionally save the keys to `.env`.
+2. **The competitor**: a website or company name. If the name matches several companies, you pick one from a list.
+3. **Your question**: type one, pick a numbered example, or press Enter for a data-driven scan.
+4. **Peer companies** to compare against (optional).
+
+It then shows live progress (Claude's decisions and each Crustdata call), prints the hypotheses, saves the brief to `exports/`, and opens it in your browser.
+
+## Setup (manual)
 
 ```bash
 python -m venv .venv

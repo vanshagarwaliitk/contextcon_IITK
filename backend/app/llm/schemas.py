@@ -2,7 +2,7 @@
 no free-form dicts, everything explicit)."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -12,6 +12,21 @@ from ..models import HypothesisType, Theme
 # B1 ------------------------------------------------------------------
 class ScopingResult(BaseModel):
     themes: list[Theme]
+
+
+# B2 (batched JSON planner, used with the Claude-account CLI backend) ---
+class PlannedProbe(BaseModel):
+    tool: Literal["job_theme_count", "job_theme_rows", "job_geo", "job_tech", "peer_theme_share",
+                  "people_leadership", "web_evidence"]
+    theme_id: str
+    window: Optional[Literal["recent", "prior", "older"]] = None
+    reason: str
+
+
+class PlannerBatch(BaseModel):
+    steps: list[PlannedProbe]
+    stop: bool
+    stop_reason: str
 
 
 # B3 ------------------------------------------------------------------

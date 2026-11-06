@@ -14,6 +14,7 @@ from pydantic import BaseModel, SecretStr
 
 from .config import Settings, get_settings
 from .db import DB, loads, now_iso
+from .llm.claude_cli import find_cli, resolve_backend
 from .models import load_signals
 from .pipeline import brief as brief_mod
 from .pipeline.runner import reset_from, run_investigation
@@ -71,9 +72,17 @@ def _settings_for_request(body: CreateInvestigation | ConfirmCompany | RunInvest
     anthropic_key = body.anthropic_api_key.get_secret_value() if body.anthropic_api_key else settings.anthropic_api_key
     if settings.provider_mode == "live" and not crustdata_key.strip():
         raise HTTPException(400, "Crustdata API key is required in live mode")
-    if settings.provider_mode == "live" and not anthropic_key.strip():
-        raise HTTPException(400, "Anthropic API key is required in live mode")
-    return replace(settings, crustdata_api_key=crustdata_key, anthropic_api_key=anthropic_key)
+    anthropic_key = anthropic_key.strip()
+    if anthropic_key.startswith("AIza"):
+        raise HTTPException(400, "That's a Google Gemini key. CoreData's reasoning runs on Claude: use an Anthropic key "
+                                 "(sk-ant-…), or leave the field empty to use your logged-in Claude account.")
+    if anthropic_key and not anthropic_key.startswith("sk-ant-"):
+        raise HTTPException(400, "Anthropic API keys start with sk-ant-. Leave the field empty to use your Claude account.")
+    out = replace(settings, crustdata_api_key=crustdata_key, anthropic_api_key=anthropic_key)
+    if settings.provider_mode == "live" and resolve_backend(out) == "none":
+        raise HTTPException(400, "Claude isn't available: enter an Anthropic API key, or install Claude Code and log in "
+                                 "with your Claude account.")
+    return out
 
 
 def _start(inv_id: str, settings: Settings | None = None) -> bool:
@@ -96,6 +105,7 @@ def health() -> dict:
     s = get_settings()
     return {"ok": True, "provider_mode": s.provider_mode, "model": s.llm_model,
             "crustdata_key": bool(s.crustdata_api_key), "anthropic_key": bool(s.anthropic_api_key),
+            "llm_backend": resolve_backend(s), "claude_account": bool(find_cli(s)),
             "people": s.enable_people, "web": s.enable_web, "factors": s.enable_factors}
 
 

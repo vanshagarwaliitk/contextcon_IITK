@@ -9,6 +9,7 @@ import json
 from typing import Any
 
 from ..llm.client import LLMError, render
+from ..llm.schemas import PlannerBatch
 from ..providers.crustdata.client import BudgetExceeded, CrustdataError
 from . import collect
 from .context import Ctx
@@ -176,6 +177,49 @@ class Planner:
                 break
         self._persist()
 
+    # ---------------------------------------------------------------- batched JSON planner (Claude account / CLI)
+    def run_batched(self, max_turns: int = 8) -> None:
+        """Claude plans up to 4 probes per call as structured JSON; Python runs each through the same guards.
+        Used when Claude runs through the CLI, which has no native tool-use loop. Fewer, larger calls."""
+        themes = self.ctx.themes()
+        if not themes:
+            self.ctx.warn("planner", "no themes to probe")
+            return
+        policy = render("b2_planner.md", {"themes": {t.id: t.label for t in themes}}).replace(
+            "Respond with tool calls only.", "")
+        history: list[dict] = []
+        failures = 0
+        for _ in range(max_turns):
+            if self.steps >= self.max_steps or self.ctx.crust.budget.calls_left <= 0:
+                break
+            try:
+                plan = self.ctx.llm.structured(
+                    "b2b_planner_json.md",
+                    {"policy": policy, "ledger": ledger_summary(self.ctx), "budget": self._budget_info(),
+                     "competitors": [c["name"] for c in self.ctx.competitors], "history": history[-12:]},
+                    PlannerBatch, effort="low", max_repairs=1,
+                )
+            except LLMError as exc:
+                failures += 1
+                self.ctx.warn("planner", f"planner LLM error ({failures}/2): {exc}")
+                if failures >= 2:
+                    self.ctx.warn("planner", "falling back to deterministic default plan")
+                    self.default_plan()
+                    return
+                continue
+            for s in plan.steps[:4]:
+                params: dict[str, Any] = {"theme_id": s.theme_id, "reason": s.reason}
+                if s.tool == "job_theme_count":
+                    params["window"] = s.window or "recent"
+                self.ctx.event("planner", f"decide {s.tool}({s.theme_id}) — {s.reason}")
+                ok, payload = self.execute(s.tool, params)
+                history.append({"tool": s.tool, **{k: v for k, v in params.items() if k != "reason"},
+                                "ok": ok, "result": payload})
+            if plan.stop or not plan.steps:
+                self.ctx.event("planner", f"stop — {plan.stop_reason or 'no further probes'}")
+                break
+        self._persist()
+
     # ---------------------------------------------------------------- deterministic plan
     def default_plan(self) -> None:
         """count(recent), count(prior), rows(recent) if count>=2, geo, peers; then people + web for top theme."""
@@ -216,6 +260,8 @@ def run(ctx: Ctx) -> None:
     if ctx.settings.fail_llm:
         ctx.warn("planner", "LLM disabled; using deterministic default plan")
         p.default_plan()
+    elif getattr(ctx.llm, "backend", "api") == "claude_cli":
+        p.run_batched()
     else:
         p.run()
     p.coverage_pass()
